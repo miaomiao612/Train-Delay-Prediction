@@ -12,6 +12,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r setup_13, cache=TRUE, message=FALSE}
 library(tidyverse)
 library(sf)
+library(chron)
+library(timeDate)
 library(lubridate)
 library(tigris)
 library(tidycensus)
@@ -64,7 +66,7 @@ palette2 <- c("#6baed6","#08519c")
 
 ```{r read_dat }
 dat <- read.csv(file.path("2019_01.csv"))
-station <-read.csv(file.path("stops.csv"))
+station <-read.csv(file.path("data/stops.csv"))
 dat<-merge(dat, station, by.x="from", by.y="stop_name")
 dat <- dat%>%
   rename(
@@ -78,9 +80,70 @@ dat <- dat%>%
          to_lng = stop_lon,
          to_zone_id=zone_id)%>%
   dplyr::select(-stop_id.x,-stop_code.x,-stop_id.y,-stop_code.y)
-  na.omit(dat)
+write.csv(dat, "C:\\Upenn\\d.csv", row.names=FALSE)
 
 ```
+
+create interval 60 
+```{r time_bins }
+dat <- dat %>%
+  mutate(interval60 = floor_date(ymd_hm(scheduled_time), unit = "hour"),
+         week = week(interval60),
+         dotw = wday(interval60, label=TRUE))
+```
+
+
+```{r get_census and extract_geometries, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+NJCensus <- 
+  get_acs(geography = "tract", 
+          variables = c("B01003_001", "B19013_001", 
+                        "B02001_002", "B08013_001",
+                        "B08012_001", "B08301_001", 
+                        "B08301_010", "B01002_001"), 
+          year = 2018, 
+          state = "NJ", 
+          geometry = TRUE, 
+          
+          output = "wide")
+
+NJTracts <- 
+  NJCensus %>%
+  as.data.frame() %>%
+  distinct(GEOID, .keep_all = TRUE) %>%
+  select(GEOID, geometry) %>% 
+  st_sf
+
+```
+
+```{r add_census_tracts , message = FALSE, warning = FALSE}
+dat_census <- st_join(dat %>% 
+          filter(is.na(from_lng) == FALSE &
+                   is.na(from_lat) == FALSE &
+                   is.na(to_lat) == FALSE &
+                   is.na(to_lng) == FALSE) %>%
+          st_as_sf(., coords = c("from_lng", "from_lat"), crs = 4326),
+        NJTracts %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) %>%
+  rename(From.Tract = GEOID) %>%
+  mutate(from_lng = unlist(map(geometry, 1)),
+         from_lat = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)%>%
+  st_as_sf(., coords = c("to_lng", "to_lat"), crs = 4326) %>%
+  st_join(., NJTracts %>%
+            st_transform(crs=4326),
+          join=st_intersects,
+          left = TRUE) %>%
+  rename(To.Tract = GEOID)  %>%
+  mutate(to_lng = unlist(map(geometry, 1)),
+         to_lat = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)
+
+```
+
 
 ```{r import_weather, message = FALSE, warning = FALSE }
 weather.Data <- 
@@ -95,9 +158,40 @@ weather.Panel  <-
     group_by(interval60) %>%
     summarize(Temperature = max(tmpf),
               Precipitation = sum(p01i),
-              Wind_Speed = max(sknt)) %>%
+              Wind_Speed = max(sknt),
+              Visibility = max(vsby)) %>%
     mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
 
 ```
+
+
+
+```{r plot_weather, catche = TRUE}
+grid.arrange( ncol=2,
+  ggplot(weather.Panel, aes(interval60,Precipitation)) + geom_line() + 
+    labs(title="Percipitation", x="Hour", y="Perecipitation") + plotTheme,
+  ggplot(weather.Panel, aes(interval60,Wind_Speed)) + geom_line() + 
+    labs(title="Wind Speed", x="Hour", y="Wind Speed") + plotTheme,
+  ggplot(weather.Panel, aes(interval60,Temperature)) + geom_line() + 
+    labs(title="Temperature", x="Hour", y="Temperature") + plotTheme,
+  ggplot(weather.Panel, aes(interval60,Visibility)) + geom_line() + 
+    labs(title="Visibility", x="Hour", y="Visibility") + plotTheme,
+  top="Weather Data - NYC Metro Area - 2018")
+
+```
+
+add holiday attribute 
+merge weather panel
+```{r}
+
+trip_panel<-
+  dat_census %>% 
+  left_join(weather.Panel)
+trip_panel$format_date<-format(trip_panel$interval60, "%Y-%m-%d")
+
+
+```
+
+
 
 
