@@ -1,8 +1,13 @@
 ---
 title: "final project"
-author: "Yifei Sun"
+author: "Yifei Sun & Kathleen Scopis"
 date: "2022-12-01"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: "hide"
+    code_download: true
 ---
 
 ```{r setup, include=FALSE}
@@ -154,7 +159,8 @@ dat_census <- st_join(dat %>%
   mutate(to_lng = unlist(map(geometry, 1)),
          to_lat = unlist(map(geometry, 2)))%>%
   as.data.frame() %>%
-  select(-geometry)
+  select(-geometry)%>%
+  na.omit
 
 ```
 
@@ -190,31 +196,126 @@ grid.arrange( ncol=2,
     labs(title="Temperature", x="Hour", y="Temperature") + plotTheme,
   ggplot(weather.Panel, aes(interval60,Visibility)) + geom_line() + 
     labs(title="Visibility", x="Hour", y="Visibility") + plotTheme,
-  top="Weather Data - NYC Metro Area - 2018")
+  top="Weather Data - NJ Metro Area - 2019")
 
 ```
 
+## Explore the data
+
+```{r explore data}
+ggplot(dat_census %>%
+         group_by(interval60) %>%
+         tally())+
+  geom_line(aes(x = interval60, y=n))+
+
+  labs(title="Delay time per hr. New Jersey, Jan, 2019",
+       x="Date", 
+       y="Number of minutes")+
+  plotTheme
+
+```
+
+```{r}
+dat_census %>%
+        mutate(time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush"))%>%
+         group_by(interval60, from, time_of_day) %>%
+         tally()%>%
+  group_by(from, time_of_day)%>%
+  summarize(mean_delay_minutes = mean(n))%>%
+  ggplot()+
+  geom_histogram(aes(mean_delay_minutes), binwidth = 1)+
+  labs(title="New Jersey, Jan, 2019",
+       x="Number of delay minutes", 
+       y="Frequency")+
+  facet_wrap(~time_of_day)+
+  plotTheme
+```
+
+
+```{r}
+ggplot(dat_census %>%
+         group_by(interval60, line) %>%
+         tally())+
+  geom_histogram(aes(n), binwidth = 5)+
+  labs(title="delay time per hr by train lines. New Jersey, Jan, 2019",
+       x="delay time", 
+       y="Number of train lines")+
+  plotTheme
+```
+```{r}
+ggplot(dat_census %>% mutate(hour = hour(actual_time)))+
+     geom_freqpoly(aes(hour, color = dotw), binwidth = 1)+
+  labs(title="Delay time in New Jersey,  by day of the week, Jan, 2019",
+       x="Hour", 
+       y="delay time")+
+     plotTheme
+
+
+```
+```{r}
+ggplot(dat_census %>% 
+         mutate(hour = hour(actual_time),
+                weekend = ifelse(dotw %in% c("周六", "周日"), "Weekend", "Weekday")))+
+     geom_freqpoly(aes(hour, color = weekend), binwidth = 1)+
+  labs(title="Train delay time in New Jersey, - weekend vs weekday, Jan, 2019",
+       x="Hour", 
+       y="delay time")+
+     plotTheme
+```
+```{r}
+ggplot()+
+  geom_sf(data = NJTracts %>%
+          st_transform(crs=4326))+
+  geom_point(data = dat_census %>% 
+            mutate(hour = hour(actual_time),
+                weekend = ifelse(dotw %in% c("周六", "周日"), "Weekend", "Weekday"),
+                time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush"))%>%
+              group_by(from, from_lat, from_lng, weekend, time_of_day) %>%
+              tally(),
+            aes(x=from_lng, y = from_lat, color = n), 
+            fill = "transparent", alpha = 1, size = 1.5)+
+  scale_colour_viridis(direction = -1,
+  discrete = FALSE, option = "D")+
+  ylim(min(dat_census$from_lat), max(dat_census$from_lat))+
+  xlim(min(dat_census$from_lng), max(dat_census$from_lng))+
+  facet_grid(weekend ~ time_of_day)+
+  labs(title="Train delay time by station. New Jersey, Jan, 2019")+
+  mapTheme
+```
 
 merge weather panel and NJTracts
 ```{r}
 
 trip_panel<-merge(dat_census, weather.Panel)%>%
   rename(GEOID=From.Tract)%>%
-left_join(NJTracts, trip_panel1, by='GEOID')
+left_join(NJTracts, trip_panel1, by='GEOID')%>%
+  rename(geometry1=geometry)
 trip_panel$format_date<-format(trip_panel$interval60, "%Y-%m-%d")
 
 
 ```
 
 ```{r}
-trip_panel$holiday <- ifelse(yday(trip_panel$scheduled_time)%in% c(
-  #New Years
-  "365", "1", "2", 
-  # St. Patrick's Day
-  "76",
-  #Christmas
-  "359"
-  ), 1,0) 
+
+trip_panel <- trip_panel %>%
+  mutate(holiday = case_when(
+    scheduled_time == 1   ~ 1,    # New Year's Day
+    scheduled_time == 32  ~ 1,   # Martin Luther King Jr. Day
+    scheduled_time == 121 ~ 1,  # Memorial Day
+    scheduled_time == 153 ~ 1,  # Independence Day
+    scheduled_time == 217 ~ 1,  # Labor Day
+    scheduled_time == 286 ~ 1,  # Thanksgiving Day
+    scheduled_time == 359 ~ 1,  # Christmas Day
+    TRUE                  ~ 0              # Other days
+  ))
+
+ 
 ```
 
 
@@ -278,8 +379,8 @@ as.data.frame(trip_panel) %>%
 
 split
 ```{r}
-trip.Train <- filter(trip_panel, week < 5)
-trip.Test <- filter(trip_panel, week >= 5)
+trip.Train <- filter(trip_panel, week < 4)
+trip.Test <- filter(trip_panel, week >= 4)
 ```
 
 
@@ -320,15 +421,28 @@ ggplot(trip_panel %>%
        y="delay time")+
   plotTheme
 ```
-
+```{r spatial_correlation}
+group_by(trip_panel, week, GEOID) %>%
+  summarize(Sum_delay_minutes = sum(delay_minutes)) %>%
+  ungroup() %>% 
+  ggplot() + geom_sf(aes(fill = q5(Sum_delay_minutes))) +
+    facet_wrap(~week, ncol = 8) +
+    scale_fill_manual(values = palette5,
+                      labels = c("16", "140", "304", "530", "958"),
+                      name = "delay time") +
+    labs(title="Sum of delay time by tract and week") +
+     theme(legend.position = "bottom") 
+```
 
 
 
 train the model:
 ```{r}
 reg1 <- lm(delay_minutes~Temperature+Precipitation+Wind_Speed+Visibility, data=trip.Train )
-
 reg2 <- 
+  lm(delay_minutes ~  line+holiday +  hour(interval60) + Temperature + Precipitation +Wind_Speed+Visibility+from, 
+     data=trip.Train)
+reg3 <- 
   lm(delay_minutes ~  line+holiday +  hour(interval60) + Temperature + Precipitation +Wind_Speed+Visibility+lagHour + lag2Hours +lag3Hours + lag12Hours + lag1day+holidayLag+leadHour+lead2Hours+lead3Hours+lead4Hours+lead12Hours+lead1day+from, 
      data=trip.Train)
 
@@ -355,8 +469,9 @@ Check the Mean Absolute Errors of each model
 ```{r do_predicitons }
 week_predictions <- 
   trip.Test.weekNest %>% 
-    mutate(A= map(.x = data, fit = reg1, .f = model_pred),
-           B = map(.x = data, fit = reg2, .f = model_pred)) %>% 
+    mutate(reg1= map(.x = data, fit = reg1, .f = model_pred),
+           reg2= map(.x = data, fit = reg2, .f = model_pred),
+           reg3= map(.x = data, fit = reg3, .f = model_pred),) %>% 
     gather(Regression, Prediction, -data, -week) %>%
     mutate(Observed = map(data, pull, delay_minutes),
            Absolute_Error = map2(Observed, Prediction,  ~ abs(.x - .y)),
@@ -380,9 +495,41 @@ week_predictions %>%
     labs(title = "Mean Absolute Errors by model specification and week") +
   plotTheme
 ```
+validate by space:
+```{r}
+error.byWeek <-
+  filter(week_predictions, Regression == "reg2") %>% 
+  unnest() %>% st_sf() %>%
+  dplyr::select(Pickup.Census.Tract, Absolute_Error, week, geometry) %>%
+  gather(Variable, Value, -Pickup.Census.Tract, -week, -geometry) %>%
+    group_by(Variable, Pickup.Census.Tract, week) %>%
+    summarize(MAE = mean(Value))
+```
 
+```{r errors_by_station, warning = FALSE, message = FALSE }
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           start_station_id = map(data, pull, start_station_id), 
+           start_lat = map(data, pull, start_lat), 
+           start_lng = map(data, pull, start_lng)) %>%
+    select(interval60, start_station_id, start_lng, start_lat, Observed, Prediction, Regression) %>%
+    unnest() %>%
+  filter(Regression == "ETime_Space_FE_timeLags_holidayLags") %>%
+  group_by(start_station_id, start_lng, start_lat) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+ggplot(.)+
+  geom_sf(data = WCensus, color = "black", fill = "transparent")+
+  geom_point(aes(x = start_lng, y = start_lat, color = MAE), 
+             fill = "transparent", alpha = 0.4)+
+  scale_colour_viridis(direction = -1,
+  discrete = FALSE, option = "D")+
+  ylim(min(dat_census$start_lat), max(dat_census$start_lat))+
+  xlim(min(dat_census$start_lng), max(dat_census$start_lng))+
+  labs(title="Mean Abs Error, Test Set, Model 5")+
+  mapTheme
+```
 
-plot the bike share number in time series of both prediction and observation
+plot the delay time in time series of both prediction and observation
 
 ```{r error_vs_actual_timeseries , warning = FALSE, message = FALSE}
 week_predictions %>% 
@@ -396,7 +543,7 @@ week_predictions %>%
     ggplot(aes(interval60, Value, colour=Variable)) + 
       geom_line(size = 1.1) + 
       facet_wrap(~Regression, ncol=1) +
-      labs(title = "Predicted/Observed bike share time series", subtitle = "Washington DC; A test set of 2 weeks",  x = "Hour", y= "Station Trips") +
+      labs(title = "Predicted/Observed delay time in time series", subtitle = "NJ; A test set of 2 weeks",  x = "Hour", y= "delay minutes") +
       plotTheme
 ```
 
