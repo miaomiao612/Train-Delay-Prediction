@@ -402,7 +402,7 @@ trip_panel <-
   mutate(lagHour = dplyr::lag(delay_minutes,1),
          lag2Hours = dplyr::lag(delay_minutes,2),
          lag3Hours = dplyr::lag(delay_minutes,3),
-         lag1day = dplyr::lead(delay_minutes,24)
+         lag1day = dplyr::lag(delay_minutes,24)
          
         )%>%
   mutate(holidayLag = case_when(dplyr::lag(holiday, 1) == 1 ~ "PlusOneDay",
